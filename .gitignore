@@ -1,2 +1,4 @@
 build/*
 .vscode/*
+third_party/lib/*
+third_party/bin/*

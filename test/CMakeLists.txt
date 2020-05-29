@@ -1,0 +1,4 @@
+add_executable(block_ftp_client block_ftp_client.cpp)
+target_link_libraries(block_ftp_client boost_system pthread)
+
+add_executable(test_epoll test_epoll.cpp)
