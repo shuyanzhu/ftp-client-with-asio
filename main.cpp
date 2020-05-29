@@ -4,7 +4,19 @@
 
 #include "ftp_client.hpp"
 
+// std::string output;
+// boost::asio::streambuf buf;
 int main(){
+    // std::function<void(int)> debug = [&debug](int num) {
+    //     if(num > 65536) return;
+    //     output.resize(num);
+    //     buf.prepare(num);
+    //     buf.commit(num);
+    //     std::cout << output.size() << std::endl;
+    //     std::cout << buf.size() << std::endl;
+    //     debug(num*2);
+    // };
+    // debug(1);
     FtpClient ftpClient;
     ftpClient.run();
     // Runner runner;

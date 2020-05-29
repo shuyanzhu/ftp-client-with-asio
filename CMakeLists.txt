@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8)
 project(ftp_client)
 add_definitions(-DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -O0")
 
 # 头文件搜索路径、连接器搜索路径
 include_directories(include)

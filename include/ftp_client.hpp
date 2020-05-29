@@ -10,10 +10,11 @@ public:
         Login,       // 登录中（USER完成、发送PASS）
         Running      // 完成登录
     };
-    FtpClient(std::string url = "192.168.93.130");
+    FtpClient(std::string url = "127.0.0.1");
     bool setEndpoint(std::string ip, int port);
     void connectedHandler(const boost::system::error_code &ec);
-    void cmdInPassiveMode(const std::string &cmd, std::shared_ptr<std::string> result);
+    using TransDataHandle = std::function<void(const boost::system::error_code &ec, size_t)>;
+    void cmdInPassiveMode(const std::string &cmd, TransDataHandle hdl);
     void LIST(const std::string &path, std::function<void()>);
     void RETR(const std::string &path, std::function<void()>);
     void STOR(const std::string &path, std::function<void()>);
