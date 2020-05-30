@@ -4,7 +4,7 @@
 
 class FtpClient{
 public:
-    enum class State{
+    enum class State{ // 未使用
         Unconnected, // 未连接（初始化、连接中）
         Connected,   // 已连接（连接完成、发送USER）
         Login,       // 登录中（USER完成、发送PASS）

@@ -44,8 +44,8 @@ void debugMain(){
 int main(){
     FtpClient ftpClient;
     ftpClient.run();
+
     // auto coutBuf = std::cout.rdbuf();
-    
     // std::ostringstream ss;
     // std::stringbuf *stringStream = ss.rdbuf();
 
