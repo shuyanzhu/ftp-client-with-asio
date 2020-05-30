@@ -30,6 +30,5 @@ private:
     boost::asio::ip::tcp::socket dataConn_;
     boost::asio::ip::tcp::endpoint serverAddr_;
 
-    std::string sendBuf_;
-    std::string readBuf_;
+    char buf1024_[1024];
 };

@@ -99,19 +99,21 @@ void FtpClient::connectedHandler(const boost::system::error_code &ec){
     runPrompt();
 }
 
-// lambda递归 + 异步，很坑
 void FtpClient::cmdInPassiveMode(const std::string &cmd, TransDataHandle hdl){
     auto request = std::make_shared<boost::asio::streambuf>();
     auto response = std::make_shared<boost::asio::streambuf>();
     auto requestStream = std::make_shared<std::ostream>(request.get());
     auto responseStream = std::make_shared<std::istream>(response.get());
     auto dataConn = std::make_shared<tcp::socket>(ioService_); // not used
-    auto afterCmd = [=](const boost::system::error_code &ec, size_t){
-       if(ec); // FIXME 
+    auto afterCmd = [this, hdl, response, responseStream](const boost::system::error_code &ec, size_t){
+       if(ec){
+           ioService_.post(std::bind(&FtpClient::runPrompt, this));
+           return;
+       }
         std::string responseString;
         std::getline(*responseStream, responseString);
         std::cout << responseString << std::endl;
-        hdl(boost::system::error_code(), 0);
+        hdl(ec, 0);
     };
     auto afterConnect = [cmd, this, dataConn, afterCmd, request, response, requestStream, responseStream](const boost::system::error_code &ec){
         if(ec) return; // FIXME
@@ -119,7 +121,7 @@ void FtpClient::cmdInPassiveMode(const std::string &cmd, TransDataHandle hdl){
         // std::cout << dataConn.use_count() << std::endl;
 
         *requestStream << cmd;
-        boost::asio::async_write(cmdConn_, *request, [=](const boost::system::error_code &ec, size_t){
+        boost::asio::async_write(cmdConn_, *request, [this, response, responseStream, afterCmd](const boost::system::error_code &ec, size_t){
             boost::asio::async_read_until(cmdConn_, *response, "\r\n", afterCmd);
         });
     };
@@ -147,59 +149,189 @@ void FtpClient::cmdInPassiveMode(const std::string &cmd, TransDataHandle hdl){
         boost::asio::async_read_until(cmdConn_, *response, "\r\n", afterPASV);
     });
 }
-static std::function<void(const boost::system::error_code &ec, size_t)> transDataHdl;
 void FtpClient::LIST(const std::string &path, std::function<void()>){
+    std::string tmpPath;
+    if(path.size() < 3) 
+        tmpPath = "";
+    else 
+        tmpPath = path.substr(3);
     auto request = std::make_shared<boost::asio::streambuf>();
     auto response = std::make_shared<boost::asio::streambuf>();
     auto requestStream = std::make_shared<std::ostream>(request.get());
     auto responseStream = std::make_shared<std::istream>(response.get());
+
+    // lambda递归 + 异步，很坑
+    // lambda表达式无需捕获静态变量，可以直接使用
+    // 不可以直接赋值，否则闭包捕获的永远都是第一次的智能指针，在这里虽然无伤大雅，但是别的地方可能有问题
+    static std::function<void(const boost::system::error_code &ec, size_t)> transDataHdl;
     transDataHdl = [this, request, response, requestStream, responseStream](const boost::system::error_code &ec, size_t readNum){
             if(ec == boost::asio::error::eof){
-                dataConn_.close();
-                boost::asio::async_read_until(cmdConn_, *response, "\r\n", [=](const boost::system::error_code &ec, size_t){
+                dataConn_.shutdown(boost::asio::ip::tcp::socket::shutdown_both); // send FIN
+                // std::cout << response->size() << std::endl;
+                boost::asio::async_read_until(cmdConn_, *response, "\r\n", [this, request, response, requestStream, responseStream](const boost::system::error_code &ec, size_t){
+                    dataConn_.close(); // 应用层表示接受结束
                     std::string responseString;
                     if(ec); // FIXME
                     std::getline(*responseStream, responseString);
                     std::cout << responseString << std::endl;
-                    runPrompt();
+                    // runPrompt();
+                    ioService_.post(std::bind(&FtpClient::runPrompt, this));
                 });
             } else if(!ec){
                     response->commit(readNum);
-                    std::string output;
-                    std::cout << output;
-                    std::ostringstream ss;
-                    ss << response.get();
-                    output = ss.str();
-                    std::cout << output;
-                    dataConn_.async_read_some(response->prepare(512), transDataHdl);
+                    auto oldBuf = std::cout.rdbuf();
+                    std::cout << response.get(); // osstringstream的stringbuf不能这样用，至于为什么，不知道
+                    std::cout.flush();
+                    std::cout.rdbuf(oldBuf);
+                    dataConn_.async_read_some(response->prepare(500), transDataHdl);
             } else {
-                // FIXME
+                // FIXME, 其他错误暂未处理
             }
     };
 
-    cmdInPassiveMode("LIST" + path + "\r\n", transDataHdl);
+    cmdInPassiveMode("LIST " + tmpPath + "\r\n", transDataHdl);
 }
-void FtpClient::RETR(const std::string &path, std::function<void()>){}
-void FtpClient::STOR(const std::string &path, std::function<void()>){}
+void FtpClient::RETR(const std::string &path, std::function<void()>){
+    // 闭包需要的东西
+    auto request = std::make_shared<boost::asio::streambuf>();
+    auto response = std::make_shared<boost::asio::streambuf>();
+    auto requestStream = std::make_shared<std::ostream>(request.get());
+    auto responseStream = std::make_shared<std::istream>(response.get());
+
+    std::string remotePath, localPath;
+    if(path.size() == 3){
+
+    } else{
+        std::istringstream is(path.substr(3));
+        is >> remotePath;
+        if(remotePath.size() == 0){
+
+        } else{
+            is >> localPath;
+            localPath = (localPath.size() != 0 ? localPath : remotePath);
+        }
+    }
+    
+    std::shared_ptr<std::ofstream> of = std::make_shared<std::ofstream>(localPath);
+    if(!(*of)){
+        std::cout << "不能创建本地文件: " << localPath << std::endl;
+        ioService_.post(std::bind(&FtpClient::runPrompt, this));
+        return;
+    }
+
+    // lambda递归 + 异步，很坑
+    // lambda表达式无需捕获静态变量，可以直接使用
+    // 不可以直接赋值，否则闭包捕获的永远都是第一次的智能指针，在这里虽然无伤大雅，但是别的地方可能有问题
+    static std::function<void(const boost::system::error_code &ec, size_t)> transDataHdl;
+    transDataHdl = [this, request, response, requestStream, responseStream, of](const boost::system::error_code &ec, size_t readNum){
+            if(ec == boost::asio::error::eof){
+                dataConn_.shutdown(tcp::socket::shutdown_both); // send FIN
+                of->close();
+                // auto num = boost::asio::read_until(cmdConn_, *response, "\r\n");
+                // response->consume(num);
+                // auto num2 = boost::asio::read_until(cmdConn_, *response, "\r\n");
+                boost::asio::async_read_until(cmdConn_, *response, "\r\n", [this, request, response, requestStream, responseStream](const boost::system::error_code &ec, size_t readNum){
+                    dataConn_.close(); // 应用层表示接收结束
+                    std::string responseString;
+                    if(ec); // FIXME
+                    std::getline(*responseStream, responseString);
+                    std::cout << responseString << std::endl;
+                    // runPrompt();
+                    ioService_.post(std::bind(&FtpClient::runPrompt, this));
+                });
+            } else if(!ec){
+                    response->commit(readNum);
+                    auto buf = of->rdbuf();
+                    auto baseOf = static_cast<std::shared_ptr<std::ostream>>(of);
+                    (*baseOf) << response.get();
+                    baseOf->flush();
+                    baseOf->rdbuf(buf); // 必须读会，至于为什么，不知道
+
+                    // std::string output;
+                    // std::ostringstream ss;
+                    // ss << response.get();
+                    // output = ss.str();
+                    // (*of) << output;
+
+                    // auto buf = response->data();
+                    // std::string output;
+                    // output.assign(boost::asio::buffers_begin(buf), boost::asio::buffers_end(buf));
+                    // (*of) << output; 
+                    // response->consume(readNum);
+                    dataConn_.async_read_some(response->prepare(500), transDataHdl);
+            } else {
+                // FIXME, 其他错误暂未处理
+            }
+    };
+
+    cmdInPassiveMode("RETR " + remotePath + "\r\n", transDataHdl);
+}
+void FtpClient::STOR(const std::string &path, std::function<void()>){
+    auto request = std::make_shared<boost::asio::streambuf>();
+    auto response = std::make_shared<boost::asio::streambuf>();
+    auto requestStream = std::make_shared<std::ostream>(request.get());
+    auto responseStream = std::make_shared<std::istream>(response.get());
+
+    std::string remotePath, localPath;
+    if(path.size() == 3){
+
+    } else{
+        std::istringstream is(path.substr(3));
+        is >> localPath;
+        if(localPath.size() == 0){
+
+        } else{
+            is >> remotePath;
+            remotePath = (remotePath.size() != 0 ? remotePath : localPath);
+        }
+    }
+    auto inputStream = std::make_shared<std::ifstream>(localPath);
+    if(!(*inputStream)){
+        ioService_.post(std::bind(&FtpClient::runPrompt, this));
+        return;
+    }
+    static std::function<void(const boost::system::error_code &ec, size_t)> transDataHdl;
+    transDataHdl = [this, request, response, requestStream, responseStream, inputStream](const boost::system::error_code &ec, size_t writeNum){
+            if(ec){
+                ioService_.post(std::bind(&FtpClient::runPrompt, this));
+                return;
+            } else {
+                if(inputStream->eof()){
+                    dataConn_.shutdown(boost::asio::ip::tcp::socket::shutdown_both); // send FIN
+                    boost::asio::async_read_until(cmdConn_, *response, "\r\n", [this, request, response, requestStream, responseStream](const boost::system::error_code &ec, size_t readNum){
+                        dataConn_.close(); // 应用层得知对方接收结束
+                        std::string responseString;
+                        if(ec); // FIXME
+                        std::getline(*responseStream, responseString);
+                        std::cout << responseString << std::endl;
+                        // runPrompt();
+                        ioService_.post(std::bind(&FtpClient::runPrompt, this));
+                    });
+                } else{
+                    inputStream->read(buf1024_, 1024);
+                    boost::asio::async_write(dataConn_, boost::asio::buffer(buf1024_, inputStream->gcount()), transDataHdl);
+                }
+            }
+    };
+
+    cmdInPassiveMode("STOR " + remotePath + "\r\n", transDataHdl);
+}
 void FtpClient::runPrompt(){
-    std::string path;
-    char *debug;
-    for(int i = 0; i < 512; i++)
-        debug = (char *)malloc(i);
+    // char *debug;
+    // debug = (char *)malloc(1016); // [505. 520] can not work
         while(true){
             std::cout << ">";
             std::cout.flush();
             std::string input;
             std::getline(std::cin, input);
             if(input.find("ls") == 0){
-                if(input.size() < 3) path = "";
-                else path = input.substr(3);
-                LIST(path, std::bind(&FtpClient::runPrompt, this));
+                LIST(input, std::bind(&FtpClient::runPrompt, this));
                 break;
             } else if(input.find("get") == 0){
-
+                RETR(input, std::bind(&FtpClient::runPrompt, this));
                 break;
             } else if(input.find("put") == 0){
+                STOR(input, std::bind(&FtpClient::runPrompt, this));
                 break;
             } else {
                 std::cout << "Not supported command: " << input << std::endl;
